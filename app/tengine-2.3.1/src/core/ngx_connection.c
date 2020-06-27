@@ -9,6 +9,46 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 
+#if (NGX_HAVE_FSTACK)
+extern int fstack_territory(int domain, int type, int protocol);
+extern int is_fstack_fd(int sockfd);
+
+/*
+ * ngx_ff_skip_listening_socket() decides whether to skip `ls`.
+ * If the current process is NGX_PROCESS_WORKER and `ls` is belong to fstack,
+ * then `*type` will be ls->type|SOCK_FSTACK when `type` is not null.
+ */
+static ngx_inline int
+ngx_ff_skip_listening_socket(ngx_cycle_t *cycle, const ngx_listening_t *ls, int *type)
+{
+    if (ngx_ff_process == NGX_FF_PROCESS_NONE) {
+
+        /* process master,  kernel network stack*/
+        if (!ls->belong_to_host) {
+            /* We should continue to process the listening socket,
+                  if it is not supported by fstack. */
+            if (fstack_territory(ls->sockaddr->sa_family, ls->type, 0)) {
+                return 1;
+            }
+        }
+    } else {
+        /* process worker, fstack */
+        if (ls->belong_to_host) {
+            return 1;
+        }
+
+        if (!fstack_territory(ls->sockaddr->sa_family, ls->type, 0)) {
+            return 1;
+        }
+
+        if(type) {
+            *type |= SOCK_FSTACK;
+        }
+    }
+
+    return 0;
+}
+#endif
 
 ngx_os_io_t  ngx_io;
 
@@ -413,6 +453,10 @@ ngx_open_listening_sockets(ngx_cycle_t *cycle)
     ngx_socket_t      s;
     ngx_listening_t  *ls;
 
+#if (NGX_HAVE_FSTACK)
+        int               type;
+#endif
+
     reuseaddr = 1;
 #if (NGX_SUPPRESS_WARN)
     failed = 0;
@@ -429,6 +473,13 @@ ngx_open_listening_sockets(ngx_cycle_t *cycle)
 
         ls = cycle->listening.elts;
         for (i = 0; i < cycle->listening.nelts; i++) {
+
+#if (NGX_HAVE_FSTACK)
+            type = ls[i].type;
+            if(ngx_ff_skip_listening_socket(cycle, &ls[i], &type)){
+                continue;
+            }
+#endif
 
             if (ls[i].ignore) {
                 continue;
@@ -487,7 +538,11 @@ ngx_open_listening_sockets(ngx_cycle_t *cycle)
                 continue;
             }
 
+#if (NGX_HAVE_FSTACK)
+            s = ngx_socket(ls[i].sockaddr->sa_family, type, 0);
+#else
             s = ngx_socket(ls[i].sockaddr->sa_family, ls[i].type, 0);
+#endif
 
             if (s == (ngx_socket_t) -1) {
                 ngx_log_error(NGX_LOG_EMERG, log, ngx_socket_errno,
@@ -722,6 +777,12 @@ ngx_configure_listening_sockets(ngx_cycle_t *cycle)
 
     ls = cycle->listening.elts;
     for (i = 0; i < cycle->listening.nelts; i++) {
+
+#if (NGX_HAVE_FSTACK)
+        if(ngx_ff_skip_listening_socket(cycle, &ls[i], NULL)){
+            continue;
+        }
+#endif
 
         ls[i].log = *ls[i].logp;
 
@@ -970,6 +1031,8 @@ ngx_configure_listening_sockets(ngx_cycle_t *cycle)
             }
         }
 
+/* TODO: configure ,  auto/feature  */
+#if !(NGX_HAVE_FSTACK)
 #elif (NGX_HAVE_IP_PKTINFO)
 
         if (ls[i].wildcard
@@ -988,7 +1051,7 @@ ngx_configure_listening_sockets(ngx_cycle_t *cycle)
                               &ls[i].addr_text);
             }
         }
-
+#endif  /* NGX_HAVE_FSTACK */
 #endif
 
 #if (NGX_HAVE_INET6 && NGX_HAVE_IPV6_RECVPKTINFO)
@@ -1069,10 +1132,19 @@ ngx_close_listening_sockets(ngx_cycle_t *cycle)
         ngx_log_debug2(NGX_LOG_DEBUG_CORE, cycle->log, 0,
                        "close listening %V #%d ", &ls[i].addr_text, ls[i].fd);
 
+#if (NGX_HAVE_FSTACK)
+        if(ls[i].fd != (ngx_socket_t) -1) {
+            if (ngx_close_socket(ls[i].fd) == -1) {
+            ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_socket_errno,
+                          ngx_close_socket_n " %V failed", &ls[i].addr_text);
+            }
+        }
+#else
         if (ngx_close_socket(ls[i].fd) == -1) {
             ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_socket_errno,
                           ngx_close_socket_n " %V failed", &ls[i].addr_text);
         }
+#endif //(NGX_HAVE_FSTACK)
 
 #if (NGX_HAVE_UNIX_DOMAIN)
 
@@ -1187,6 +1259,10 @@ ngx_get_connection(ngx_socket_t s, ngx_log_t *log)
     aev->async = 1;
 #endif
 
+#if (NGX_HAVE_FSTACK)
+    rev->belong_to_host = wev->belong_to_host = is_fstack_fd(s) ? 0 : 1;
+#endif
+
     return c;
 }
 
@@ -1238,7 +1314,11 @@ ngx_close_connection(ngx_connection_t *c)
 #endif
 
     if (!c->shared) {
+#if (NGX_HAVE_FSTACK)
+        if (ngx_event_actions.del_conn) {
+#else
         if (ngx_del_conn) {
+#endif
             ngx_del_conn(c, NGX_CLOSE_EVENT);
 
         } else {

@@ -17,10 +17,22 @@ mkdir -p $NGX_OBJS/src/core $NGX_OBJS/src/event $NGX_OBJS/src/event/modules \
          $NGX_OBJS/src/proc \
          $NGX_OBJS/modules
 
-
 ngx_objs_dir=$NGX_OBJS$ngx_regex_dirsep
 ngx_use_pch=`echo $NGX_USE_PCH | sed -e "s/\//$ngx_regex_dirsep/g"`
 
+if [ ! $FF_PATH ]; then
+	FF_PATH=/usr/local
+	echo "FF_PATH environment variable not defined, default FF_PATH=$FF_PATH"
+fi
+
+if [ ! $FF_DPDK ]; then
+	FF_DPDK=/usr/local
+	echo "FF_DPDK environment variable not defined, default FF_DPDK=$FF_DPDK"
+fi
+
+CORE_LIBS="$CORE_LIBS -L$FF_PATH/lib -Wl,--whole-archive,-lfstack,--no-whole-archive"
+CORE_LIBS="$CORE_LIBS -L$FF_DPDK/lib -Wl,--whole-archive,-ldpdk,--no-whole-archive"
+CORE_LIBS="$CORE_LIBS -Wl,--no-whole-archive -lrt -lm -ldl -lcrypto -lpthread -lnuma"
 
 cat << END                                                     > $NGX_MAKEFILE
 
@@ -28,6 +40,8 @@ CC =	$CC
 CFLAGS = $CFLAGS
 CPP =	$CPP
 LINK =	$LINK
+
+CFLAGS += -I$FF_PATH/lib
 
 END
 

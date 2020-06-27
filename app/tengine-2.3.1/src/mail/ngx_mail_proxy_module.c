@@ -18,6 +18,10 @@ typedef struct {
     ngx_flag_t  xclient;
     size_t      buffer_size;
     ngx_msec_t  timeout;
+
+#if (NGX_HAVE_FSTACK)
+    ngx_flag_t  kernel_network_stack;
+#endif
 } ngx_mail_proxy_conf_t;
 
 

@@ -38,7 +38,19 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
 
     type = (pc->type ? pc->type : SOCK_STREAM);
 
+#if (NGX_HAVE_FSTACK)
+    /*
+     We use a creation flags created by fstack's adaptable layer to 
+      to explicitly call the needed socket() function.
+    */
+    if (!pc->belong_to_host) {
+        s = ngx_socket(pc->sockaddr->sa_family, type | SOCK_FSTACK, 0);
+    } else {
+        s = ngx_socket(pc->sockaddr->sa_family, type, 0);
+    }
+#else
     s = ngx_socket(pc->sockaddr->sa_family, type, 0);
+#endif
 
     ngx_log_debug2(NGX_LOG_DEBUG_EVENT, pc->log, 0, "%s socket %d",
                    (type == SOCK_STREAM) ? "stream" : "dgram", s);
@@ -193,7 +205,11 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
 
     c->number = ngx_atomic_fetch_add(ngx_connection_counter, 1);
 
+#if (NGX_HAVE_FSTACK)
+    if (ngx_event_actions.add_conn) {
+#else
     if (ngx_add_conn) {
+#endif
         if (ngx_add_conn(c) == NGX_ERROR) {
             goto failed;
         }
@@ -245,7 +261,11 @@ ngx_event_connect_peer(ngx_peer_connection_t *pc)
         }
     }
 
+#if (NGX_HAVE_FSTACK)
+    if (ngx_event_actions.add_conn) {
+#else
     if (ngx_add_conn) {
+#endif
         if (rc == -1) {
 
             /* NGX_EINPROGRESS */
@@ -352,7 +372,21 @@ ngx_event_connect_set_transparent(ngx_peer_connection_t *pc, ngx_socket_t s)
 
     case AF_INET:
 
-#if defined(IP_TRANSPARENT)
+#if defined(NGX_HAVE_FSTACK)
+        /****
+        FreeBSD define IP_BINDANY in freebsd/netinet/in.h
+        Fstack should only support IP_BINDANY.
+        ****/
+        #define IP_BINDANY      24      
+        if (setsockopt(s, IPPROTO_IP, IP_BINDANY,
+                       (const void *) &value, sizeof(int)) == -1)
+        {
+            ngx_log_error(NGX_LOG_ALERT, pc->log, ngx_socket_errno,
+                   "setsockopt(IP_BINDANY) failed");
+            return NGX_ERROR;
+        }
+
+#elif defined(IP_TRANSPARENT)
 
         if (setsockopt(s, IPPROTO_IP, IP_TRANSPARENT,
                        (const void *) &value, sizeof(int)) == -1)

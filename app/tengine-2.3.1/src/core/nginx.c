@@ -33,6 +33,10 @@ static void ngx_unload_module(void *data);
 static char *ngx_master_set_env(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 #endif
 
+#if (NGX_HAVE_FSTACK)
+static char *ngx_set_fstack_conf(ngx_conf_t *cf, ngx_command_t *cmd,
+	void *conf);
+#endif
 
 static ngx_conf_enum_t  ngx_debug_points[] = {
     { ngx_string("stop"), NGX_DEBUG_POINTS_STOP },
@@ -164,6 +168,22 @@ static ngx_command_t  ngx_core_commands[] = {
       0,
       NULL },
 
+#endif
+
+#if (NGX_HAVE_FSTACK)
+    { ngx_string("fstack_conf"),
+      NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_TAKE1,
+      ngx_set_fstack_conf,
+      0,
+      offsetof(ngx_core_conf_t, fstack_conf),
+      NULL },
+
+    { ngx_string("schedule_timeout"),
+      NGX_MAIN_CONF|NGX_DIRECT_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_msec_slot,
+      0,
+      offsetof(ngx_core_conf_t, schedule_timeout),
+      NULL },
 #endif
 
       ngx_null_command
@@ -1108,6 +1128,10 @@ ngx_core_module_create_conf(ngx_cycle_t *cycle)
     ccf->user = (ngx_uid_t) NGX_CONF_UNSET_UINT;
     ccf->group = (ngx_gid_t) NGX_CONF_UNSET_UINT;
 
+#if (NGX_HAVE_FSTACK)
+    ccf->schedule_timeout = NGX_CONF_UNSET_MSEC;
+#endif  
+
     if (ngx_array_init(&ccf->env, cycle->pool, 1, sizeof(ngx_str_t))
         != NGX_OK)
     {
@@ -1135,6 +1159,10 @@ ngx_core_module_init_conf(ngx_cycle_t *cycle, void *conf)
                         1);
 #endif
     ngx_conf_init_value(ccf->debug_points, 0);
+
+#if (NGX_HAVE_FSTACK)
+	ngx_conf_init_msec_value(ccf->schedule_timeout, 30);
+#endif
 
 #if (NGX_HAVE_CPU_AFFINITY)
 
@@ -1663,6 +1691,34 @@ ngx_unload_module(void *data)
 
 #endif
 
+#if (NGX_HAVE_FSTACK)
+static
+char *ngx_set_fstack_conf(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf)
+{
+    char *p = conf;
+
+    ngx_str_t *field, *value;
+    ngx_str_t full;
+
+    field = (ngx_str_t *)(p + cmd->offset);
+
+    if (field->data) {
+        return "is duplicate";
+    }
+
+    value = cf->args->elts;
+    full = value[1];
+
+    if (ngx_conf_full_name(cf->cycle, &full, 1) != NGX_OK) {
+        return NGX_CONF_ERROR;
+    }
+
+    *field = full;
+
+    return NGX_CONF_OK;
+}
+#endif
 
 #if (T_NGX_MASTER_ENV)
 

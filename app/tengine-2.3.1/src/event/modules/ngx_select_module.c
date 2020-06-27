@@ -18,7 +18,9 @@ static ngx_int_t ngx_select_del_event(ngx_event_t *ev, ngx_int_t event,
     ngx_uint_t flags);
 static ngx_int_t ngx_select_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
     ngx_uint_t flags);
+#if !(NGX_HAVE_FSTACK)
 static void ngx_select_repair_fd_sets(ngx_cycle_t *cycle);
+#endif
 static char *ngx_select_init_conf(ngx_cycle_t *cycle, void *conf);
 
 
@@ -294,7 +296,9 @@ ngx_select_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
         ngx_log_error(level, cycle->log, err, "select() failed");
 
         if (err == NGX_EBADF) {
+#if !(NGX_HAVE_FSTACK)
             ngx_select_repair_fd_sets(cycle);
+#endif
         }
 
         return NGX_ERROR;
@@ -305,8 +309,10 @@ ngx_select_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
             return NGX_OK;
         }
 
+#if !(NGX_HAVE_FSTACK)
         ngx_log_error(NGX_LOG_ALERT, cycle->log, 0,
                       "select() returned no events without timeout");
+#endif
         return NGX_ERROR;
     }
 
@@ -318,14 +324,22 @@ ngx_select_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
         found = 0;
 
         if (ev->write) {
+#if (NGX_HAVE_FSTACK)
+            if (FD_ISSET(CLR_FD_BIT(c->fd), &work_write_fd_set)) {
+#else
             if (FD_ISSET(c->fd, &work_write_fd_set)) {
+#endif
                 found = 1;
                 ngx_log_debug1(NGX_LOG_DEBUG_EVENT, cycle->log, 0,
                                "select write %d", c->fd);
             }
 
         } else {
+#if (NGX_HAVE_FSTACK)
+            if (FD_ISSET(CLR_FD_BIT(c->fd), &work_read_fd_set)) {
+#else
             if (FD_ISSET(c->fd, &work_read_fd_set)) {
+#endif
                 found = 1;
                 ngx_log_debug1(NGX_LOG_DEBUG_EVENT, cycle->log, 0,
                                "select read %d", c->fd);
@@ -348,13 +362,15 @@ ngx_select_process_events(ngx_cycle_t *cycle, ngx_msec_t timer,
         ngx_log_error(NGX_LOG_ALERT, cycle->log, 0,
                       "select ready != events: %d:%d", ready, nready);
 
+#if !(NGX_HAVE_FSTACK)
         ngx_select_repair_fd_sets(cycle);
+#endif
     }
 
     return NGX_OK;
 }
 
-
+#if !(NGX_HAVE_FSTACK)
 static void
 ngx_select_repair_fd_sets(ngx_cycle_t *cycle)
 {
@@ -401,6 +417,7 @@ ngx_select_repair_fd_sets(ngx_cycle_t *cycle)
 
     max_fd = -1;
 }
+#endif
 
 
 static char *
